@@ -65,7 +65,7 @@ install.packages(c("mixOmics", "caret", "dplyr", "tibble", "MASS",
                    "future", "furrr", "parallelly"))
 
 # CASPOC package (from GitHub):
-# devtools::install_github("jonathanth/caspoc")
+# devtools::install_github("jonathanth/caspoc", ref = "CASPOC-v1.1")
 ```
 
 ## Output
