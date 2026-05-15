@@ -21,8 +21,8 @@ HP_GRID <- list(
 )
 
 # Simulation settings
-N_ITERATIONS <- 5
-N_PERM       <- 5
+N_ITERATIONS <- 100
+N_PERM       <- 100
 
 # Dataset definitions (generators reference functions from generate_data.R)
 datasets <- list(
