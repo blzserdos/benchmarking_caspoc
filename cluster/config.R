@@ -54,6 +54,8 @@ datasets <- list(
 )
 
 # Build the full job grid (one row per atomic CV run)
+# The grid is shuffled deterministically so that each chunk gets a mix of
+# fast (naive_cv) and slow (nested_cv) jobs, making walltime more uniform.
 build_job_grid <- function() {
   grids <- list()
   for (ds_name in names(datasets)) {
@@ -69,5 +71,12 @@ build_job_grid <- function() {
       grids[[ds_name]] <- g
     }
   }
-  do.call(rbind, grids)
+  full_grid <- do.call(rbind, grids)
+
+  # Deterministic shuffle so chunk assignment is reproducible
+  set.seed(42)
+  full_grid <- full_grid[sample(nrow(full_grid)), ]
+  rownames(full_grid) <- NULL
+
+  full_grid
 }
