@@ -15,18 +15,27 @@ All methods use a uniform permutation-based approach: the full CV pipeline is re
 
 ```
 benchmarking_caspoc/
-├── run_benchmarks.R          # Main analysis script (entry point)
+├── run_benchmarks.R          # Local analysis script (uses future/furrr)
 ├── R/
 │   ├── generate_data.R       # Simulated and real data generators
 │   ├── cv_approaches.R       # Uniform wrappers for all 4 CV methods
 │   ├── permutation_test.R    # Permutation-based significance testing
 │   └── evaluate_results.R    # Summarisation and reporting utilities
-├── results/                  # Output .rds files (raw + summary)
+├── cluster/                  # SLURM cluster execution
+│   ├── config.R              # Shared configuration (grid, datasets, HP settings)
+│   ├── submit.sh             # SLURM array job submission script
+│   ├── run_chunk.R           # Worker script (processes a chunk of the job grid)
+│   ├── collect_results.R     # Post-processing (combines chunks, computes p-values)
+│   ├── chunks/               # Partial results from each array task
+│   └── logs/                 # SLURM stdout/stderr logs
+├── results/                  # Final output .rds files
 ├── data/                     # Real datasets (if applicable)
 └── figures/                  # Generated plots
 ```
 
 ## Usage
+
+### Local (laptop/workstation)
 
 ```r
 # From the benchmarking_caspoc/ directory:
@@ -40,7 +49,25 @@ source("run_benchmarks.R")
 run_all_benchmarks()
 ```
 
-Iterations are parallelized across cores using the `future`/`furrr` framework. Set `N_CORES <- 1` in the config section to run sequentially.
+Uses the `future`/`furrr` framework for multi-core parallelism. Set `N_CORES <- 1` for sequential execution.
+
+### Cluster (SLURM)
+
+```bash
+cd benchmarking_caspoc
+
+# 1. Submit array job (404 tasks, each processing 200 jobs)
+sbatch cluster/submit.sh
+
+# 2. Monitor progress
+squeue -u $USER
+ls cluster/chunks/ | wc -l   # completed chunks
+
+# 3. After all tasks finish, collect and summarise
+Rscript cluster/collect_results.R
+```
+
+Edit `cluster/config.R` to change simulation parameters. Edit `cluster/submit.sh` to adjust SLURM resources or chunk size.
 
 ## Configuration
 
@@ -70,5 +97,6 @@ install.packages(c("mixOmics", "caret", "dplyr", "tibble", "MASS",
 
 ## Output
 
-- `results/benchmark_raw_results.rds` — one row per approach × iteration with observed statistic and permutation p-value
+- `results/<dataset>_flat_results.rds` — one row per job (iteration × approach × perm_id), the full raw data
+- `results/benchmark_results.rds` — one row per (iteration × approach) with observed statistic and permutation p-value
 - `results/benchmark_summary.rds` — aggregated: mean/SD of test statistics, rejection rates at α = 0.05 (labeled "FPR" for null data, "Power" for signal data)

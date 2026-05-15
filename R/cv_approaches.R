@@ -102,7 +102,7 @@ run_naive_cv <- function(X, Y,
   }
 
   best_idx <- which.max(results$mean_cor)
-  elapsed <- (proc.time() - start_time)["elapsed"]
+  elapsed <- unname((proc.time() - start_time)["elapsed"])
 
   list(
     approach        = "naive_cv",
@@ -192,7 +192,7 @@ run_repeated_cv <- function(X, Y,
     summarise(median_cor = median(mean_cor, na.rm = TRUE), .groups = "drop")
 
   best_idx <- which.max(summary_results$median_cor)
-  elapsed <- (proc.time() - start_time)["elapsed"]
+  elapsed <- unname((proc.time() - start_time)["elapsed"])
 
   list(
     approach        = "repeated_cv",
@@ -337,7 +337,7 @@ run_nested_cv <- function(X, Y,
     }
   }
 
-  elapsed <- (proc.time() - start_time)["elapsed"]
+  elapsed <- unname((proc.time() - start_time)["elapsed"])
 
   list(
     approach        = "nested_cv",
@@ -399,7 +399,7 @@ run_caspoc <- function(X, Y,
   test_for_best <- res$results_test_df %>%
     filter(Component == ncomp, KeepX == best_kx, KeepY == best_ky)
 
-  elapsed <- (proc.time() - start_time)["elapsed"]
+  elapsed <- unname((proc.time() - start_time)["elapsed"])
 
   list(
     approach        = "caspoc",
