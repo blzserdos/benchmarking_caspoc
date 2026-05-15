@@ -20,7 +20,7 @@
 #SBATCH --array=1-404
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
-#SBATCH --time=02:00:00
+#SBATCH --time=06:00:00
 #SBATCH --output=cluster/logs/slurm_%A_%a.out
 #SBATCH --error=cluster/logs/slurm_%A_%a.err
 
