@@ -12,12 +12,12 @@
 #             = 100 * 4 * 101 * 2 = 80,800
 #   Array tasks = ceil(80800 / CHUNK_SIZE)
 #
-# With CHUNK_SIZE=400: ceil(80800/400) = 202 array tasks
+# With CHUNK_SIZE=200: ceil(80800/200) = 404 array tasks
 # =============================================================================
 
 #SBATCH --account=nn9114k
 #SBATCH --job-name=caspoc_bench
-#SBATCH --array=1-202
+#SBATCH --array=1-404
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
 #SBATCH --time=02:00:00
@@ -25,7 +25,7 @@
 #SBATCH --error=cluster/logs/slurm_%A_%a.err
 
 # --- Configuration ---
-CHUNK_SIZE=400
+CHUNK_SIZE=200
 
 # --- Setup ---
 module load R/4.5.2-gfbf-2025b
