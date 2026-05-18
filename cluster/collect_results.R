@@ -30,12 +30,14 @@ expected_grid <- build_job_grid()
 n_expected    <- nrow(expected_grid)
 n_actual      <- nrow(flat_results)
 
+make_key <- function(df) {
+  paste(df$dataset, df$iteration, df$approach, df$perm_id,
+        df$signal_strength, sep = "|")
+}
+
 if (n_actual < n_expected) {
-  # Find missing jobs
-  flat_results$job_key <- paste(flat_results$dataset, flat_results$iteration,
-                                flat_results$approach, flat_results$perm_id, sep = "|")
-  expected_grid$job_key <- paste(expected_grid$dataset, expected_grid$iteration,
-                                 expected_grid$approach, expected_grid$perm_id, sep = "|")
+  flat_results$job_key  <- make_key(flat_results)
+  expected_grid$job_key <- make_key(expected_grid)
 
   missing <- setdiff(expected_grid$job_key, flat_results$job_key)
   warning(sprintf("%d of %d jobs missing (%d completed). Missing jobs:\n%s",
@@ -49,12 +51,13 @@ if (n_actual < n_expected) {
 }
 
 # --- Check for duplicates ---
-n_unique <- nrow(distinct(flat_results, dataset, iteration, approach, perm_id))
+n_unique <- nrow(distinct(flat_results, dataset, iteration, approach, perm_id,
+                          signal_strength))
 if (n_unique < n_actual) {
   warning(sprintf("%d duplicate rows detected. Keeping first occurrence.",
                   n_actual - n_unique))
   flat_results <- distinct(flat_results, dataset, iteration, approach, perm_id,
-                           .keep_all = TRUE)
+                           signal_strength, .keep_all = TRUE)
 }
 
 # --- Compute permutation p-values ---
@@ -63,12 +66,12 @@ message("Computing permutation p-values...")
 # Split into real and permutation runs
 real_runs <- flat_results %>%
   filter(perm_id == 0) %>%
-  select(dataset, iteration, approach,
+  select(dataset, iteration, approach, signal_strength,
          observed_stat, selected_keepX, selected_keepY, runtime_sec)
 
 perm_runs <- flat_results %>%
   filter(perm_id > 0) %>%
-  group_by(dataset, iteration, approach) %>%
+  group_by(dataset, iteration, approach, signal_strength) %>%
   summarise(
     n_perm_completed   = sum(!is.na(observed_stat)),
     null_stats         = list(observed_stat[!is.na(observed_stat)]),
@@ -76,20 +79,28 @@ perm_runs <- flat_results %>%
     .groups = "drop"
   )
 
-# Join and compute p-values
+# Join and compute p-values. For datasets where permutations were disabled
+# (run_perm = FALSE in config.R) the join leaves perm columns NA and the
+# p-value is set to NA rather than spuriously 1.
 all_results <- real_runs %>%
-  left_join(perm_runs, by = c("dataset", "iteration", "approach")) %>%
+  left_join(perm_runs,
+            by = c("dataset", "iteration", "approach", "signal_strength")) %>%
   rowwise() %>%
   mutate(
     perm_pvalue = {
-      n_extreme <- sum(null_stats >= observed_stat)
-      n_valid   <- length(null_stats)
-      (n_extreme + 1) / (n_valid + 1)
+      if (is.null(null_stats) || length(null_stats) == 0) {
+        NA_real_
+      } else {
+        n_extreme <- sum(null_stats >= observed_stat)
+        n_valid   <- length(null_stats)
+        (n_extreme + 1) / (n_valid + 1)
+      }
     },
-    total_runtime_sec = runtime_sec + total_perm_runtime
+    total_runtime_sec = runtime_sec +
+                        ifelse(is.na(total_perm_runtime), 0, total_perm_runtime)
   ) %>%
   ungroup() %>%
-  select(dataset, iteration, approach,
+  select(dataset, iteration, approach, signal_strength,
          observed_stat, selected_keepX, selected_keepY,
          perm_pvalue, n_perm_completed, runtime_sec, total_runtime_sec)
 
@@ -116,12 +127,12 @@ print_comparison_table(summary)
 # --- Completeness report ---
 cat("\n=== COMPLETENESS REPORT ===\n")
 completeness <- all_results %>%
-  group_by(dataset, approach) %>%
+  group_by(dataset, approach, signal_strength) %>%
   summarise(
     n_iterations     = n(),
-    min_perms        = min(n_perm_completed),
-    max_perms        = max(n_perm_completed),
-    median_perms     = median(n_perm_completed),
+    min_perms        = suppressWarnings(min(n_perm_completed, na.rm = TRUE)),
+    max_perms        = suppressWarnings(max(n_perm_completed, na.rm = TRUE)),
+    median_perms     = median(n_perm_completed, na.rm = TRUE),
     total_cpu_hours  = sum(total_runtime_sec, na.rm = TRUE) / 3600,
     .groups = "drop"
   )

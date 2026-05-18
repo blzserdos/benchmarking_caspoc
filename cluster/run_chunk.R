@@ -44,7 +44,8 @@ for (j in seq_len(nrow(my_jobs))) {
 
   # Generate data from seed
   ds <- datasets[[job$dataset]]
-  data <- ds$generator(seed = job$iteration)
+  data <- ds$generator(seed = job$iteration,
+                       signal_strength = job$signal_strength)
 
   # Permute Y if this is a permutation run
   if (job$perm_id > 0) {
@@ -71,14 +72,15 @@ for (j in seq_len(nrow(my_jobs))) {
   )
 
   results[[j]] <- data.frame(
-    dataset        = job$dataset,
-    iteration      = job$iteration,
-    approach       = job$approach,
-    perm_id        = job$perm_id,
-    observed_stat  = if (!is.null(result)) result$observed_stat else NA_real_,
-    selected_keepX = if (!is.null(result)) result$selected_keepX else NA_real_,
-    selected_keepY = if (!is.null(result)) result$selected_keepY else NA_real_,
-    runtime_sec    = if (!is.null(result)) result$runtime else NA_real_,
+    dataset         = job$dataset,
+    iteration       = job$iteration,
+    approach        = job$approach,
+    perm_id         = job$perm_id,
+    signal_strength = job$signal_strength,
+    observed_stat   = if (!is.null(result)) result$observed_stat  else NA_real_,
+    selected_keepX  = if (!is.null(result)) result$selected_keepX else NA_real_,
+    selected_keepY  = if (!is.null(result)) result$selected_keepY else NA_real_,
+    runtime_sec     = if (!is.null(result)) result$runtime        else NA_real_,
     stringsAsFactors = FALSE
   )
 

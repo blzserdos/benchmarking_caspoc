@@ -43,8 +43,13 @@ summarise_single_run <- function(result, perm_result, dataset_name, iteration = 
 #'
 #' @return A summary data.frame grouped by dataset x approach
 compute_summary_stats <- function(results_df) {
+  group_cols <- c("dataset", "approach")
+  if ("signal_strength" %in% names(results_df)) {
+    group_cols <- c(group_cols, "signal_strength")
+  }
+
   results_df %>%
-    group_by(dataset, approach) %>%
+    group_by(across(all_of(group_cols))) %>%
     summarise(
       n_iterations     = n(),
 
@@ -54,8 +59,9 @@ compute_summary_stats <- function(results_df) {
 
       # Rejection rate at alpha = 0.05 (based on permutation p-values)
       # Interpretation depends on dataset:
-      #   null/permuted data -> this is the false positive rate (should be ~0.05)
-      #   signal data        -> this is power (higher is better)
+      #   null/permuted data -> false positive rate (should be ~0.05)
+      #   signal data        -> power (higher is better)
+      # NaN when permutations were disabled for this dataset.
       reject_rate_005  = mean(perm_pvalue < 0.05, na.rm = TRUE),
 
       # Runtime
@@ -95,25 +101,49 @@ load_results <- function(filename, results_dir = "results") {
 print_comparison_table <- function(summary_df) {
   cat("\n=== BENCHMARKING COMPARISON ===\n\n")
 
+  has_strength <- "signal_strength" %in% names(summary_df)
+
   for (ds in unique(summary_df$dataset)) {
     is_null <- grepl("null|permuted", ds, ignore.case = TRUE)
     rate_label <- if (is_null) "FPR" else "Power"
 
-    cat(sprintf("--- Dataset: %s ---\n", ds))
-    sub <- summary_df %>% filter(dataset == ds)
+    sub_ds <- summary_df %>% filter(dataset == ds)
 
-    cat(sprintf("%-15s %10s %10s %10s %10s\n",
-                "Approach", "Mean_stat", "SD_stat", rate_label, "Time(s)"))
-    cat(paste(rep("-", 60), collapse = ""), "\n")
-
-    for (j in seq_len(nrow(sub))) {
-      cat(sprintf("%-15s %10.3f %10.3f %10.3f %10.1f\n",
-                  sub$approach[j],
-                  sub$mean_stat[j],
-                  sub$sd_stat[j],
-                  sub$reject_rate_005[j],
-                  sub$mean_runtime[j]))
+    # Iterate over signal strengths within the dataset (NA for null datasets)
+    strengths <- if (has_strength) {
+      unique(sub_ds$signal_strength)
+    } else {
+      NA
     }
-    cat("\n")
+
+    for (s in strengths) {
+      header <- if (has_strength && !is.na(s)) {
+        sprintf("--- Dataset: %s | signal_strength = %g ---\n", ds, s)
+      } else {
+        sprintf("--- Dataset: %s ---\n", ds)
+      }
+      cat(header)
+
+      sub <- if (has_strength) {
+        sub_ds %>% filter(signal_strength %in% s |
+                          (is.na(signal_strength) & is.na(s)))
+      } else {
+        sub_ds
+      }
+
+      cat(sprintf("%-15s %10s %10s %10s %10s\n",
+                  "Approach", "Mean_stat", "SD_stat", rate_label, "Time(s)"))
+      cat(paste(rep("-", 60), collapse = ""), "\n")
+
+      for (j in seq_len(nrow(sub))) {
+        cat(sprintf("%-15s %10.3f %10.3f %10.3f %10.1f\n",
+                    sub$approach[j],
+                    sub$mean_stat[j],
+                    sub$sd_stat[j],
+                    sub$reject_rate_005[j],
+                    sub$mean_runtime[j]))
+      }
+      cat("\n")
+    }
   }
 }

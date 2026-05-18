@@ -7,17 +7,21 @@
 #   cd benchmarking_caspoc
 #   sbatch cluster/submit.sh
 #
-# Adjust CHUNK_SIZE and --array range to control granularity:
-#   Total jobs = N_ITERATIONS * N_APPROACHES * (N_PERM + 1) * N_DATASETS
-#             = 100 * 4 * 101 * 2 = 80,800
-#   Array tasks = ceil(80800 / CHUNK_SIZE)
+# Adjust CHUNK_SIZE and --array range to control granularity.
 #
-# With CHUNK_SIZE=200: ceil(80800/200) = 404 array tasks
+# Total jobs depend on cluster/config.R — datasets can opt out of permutation
+# testing (run_perm = FALSE) and signal datasets sweep over SIGNAL_STRENGTHS.
+# Get the exact number after editing config with:
+#   Rscript -e 'source("cluster/config.R"); print_grid_summary(200)'
+#
+# Defaults (sim_null without perms, sim_signal with N_PERM=100 and one
+# signal strength) give: 100*4*1 + 100*4*101*1 = 40,800 jobs
+# -> 204 array tasks with CHUNK_SIZE=200.
 # =============================================================================
 
 #SBATCH --account=nn9114k
 #SBATCH --job-name=caspoc_bench
-#SBATCH --array=1-404
+#SBATCH --array=1-204
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
 #SBATCH --time=06:00:00
