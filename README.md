@@ -56,7 +56,11 @@ Uses the `future`/`furrr` framework for multi-core parallelism. Set `N_CORES <- 
 ```bash
 cd benchmarking_caspoc
 
-# 1. Submit array job (404 tasks, each processing 200 jobs)
+# 0. Confirm the grid size after editing config
+Rscript -e 'source("cluster/config.R"); print_grid_summary(100)'
+
+# 1. Submit array job (2,832 tasks, each processing 100 jobs)
+#    Check your cluster's cap first: scontrol show config | grep MaxArraySize
 sbatch cluster/submit.sh
 
 # 2. Monitor progress
@@ -78,12 +82,72 @@ Key parameters in `run_benchmarks.R`:
 - `N_CORES` — number of parallel workers (default: all cores minus one)
 - `CV_CONFIG` — shared settings: number of folds (10), repeats (11), inner folds (5)
 - `HP_GRID` — keepX/keepY sparsity options to search over
+- `BLOCK_STRUCTURE` — within-block correlation (see below); `NULL` for independent features
+- `SIGNAL_STRENGTHS` — signal strengths swept on signal datasets
 
 ## Datasets
 
-- **sim_null**: Independent X and Y (n=100, p=200, q=50). Used to assess Type I error (false positive rate).
-- **sim_signal**: Shared latent structure with sparse loadings (20 relevant X, 10 relevant Y). Used to assess power.
+- **sim_null**: No association between X and Y (n=100, p=200, q=50). Used to assess Type I error (false positive rate).
+- **sim_signal**: Shared latent structure with sparse loadings (20 relevant X, 10 relevant Y), swept over `SIGNAL_STRENGTHS`. Used to assess power.
 - Real datasets (breast TCGA, microbiome?).
+
+### Within-block correlation
+
+Both simulated datasets apply **block-diagonal compound symmetry with
+heterogeneous module strengths**. Module `k` has size ∝ `k^-alpha` and
+within-module correlation `rho * k^-beta`; correlation across modules is zero.
+It is realised as one latent factor per module, so every feature keeps unit
+marginal variance and `signal_strength` means the same thing regardless of
+structure.
+
+Defaults (`n_modules=8, alpha=0.5, rho=0.8, beta=0.5`) were fitted to the
+`breast.TCGA` mRNA block by minimising RMSE over the first 20 eigenvalue
+fractions at matched n and p:
+
+| PC | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| real (%) | 18.9 | 13.1 | 5.5 | 5.4 | 4.2 | 3.3 | 2.4 | 2.1 |
+| sim (%) | 19.2 | 10.0 | 6.6 | 5.2 | 4.1 | 3.6 | 3.1 | 2.6 |
+
+`beta > 0` matters more than it looks. Equal-strength modules (`beta = 0`)
+produce a few equal eigenvalue spikes and then a cliff — 3 modules gives
+19.5/14.7/12.6/**1.2**/1.2/… — which leaves sPLS facing several equally
+attractive spurious directions. That idealisation is measurably pessimistic:
+power at `signal_strength = 4` was 0.49 under equal modules versus 0.85 under
+the fitted decaying spectrum.
+
+The fit prioritises the eigenvalue spectrum, which is what governs sPLS's
+behaviour, and pays for it elsewhere: simulated mean |correlation| is 0.135
+against 0.200 in the real block. The structure also has no negative
+correlations, which is a real gap for compositional (CLR-transformed)
+microbiome data.
+
+None of this is cosmetic. Module factors are independent *across* blocks but
+high variance *within* one, so at n=100 sPLS is readily distracted by spurious
+factor-to-factor alignments. Adding the structure shifts the detectability
+threshold right by roughly 3–4× relative to independent noise.
+
+### Interpreting `signal_strength`
+
+With unit-norm loadings and independent noise, the oracle cross-block
+correlation is exactly `s/(s+1)`, and each relevant feature carries
+`0.05s/(1+0.05s)` of its variance on the shared axis (20 relevant X features).
+Under `BLOCK_STRUCTURE` this becomes `s/(s + l'Σl)`, so it depends on
+`SIGNAL_ALIGNMENT`:
+
+| | oracle cor at s=1 | power at s=4 |
+|---|---|---|
+| `spread` (default) | 0.50 ± 0.03 | 0.38 |
+| `aligned` | 0.58 ± 0.15 | 0.72 |
+
+`spread` is the default precisely because it preserves the identity, so a power
+curve indexed by `s` is interpretable.
+
+For scale: applying the same CV statistic to real `breast.TCGA` block pairs
+(subsampled to n=100) calibrates them to `s ≈ 28–51` — far above the range
+where the four methods differ in power (the transition spans roughly `s = 2` to
+`s = 10`). The sweep therefore characterises the **hard regime**, not the regime
+real omics data occupies, where all four methods saturate at power 1.
 
 ## Dependencies
 
