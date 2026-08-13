@@ -24,46 +24,70 @@ HP_GRID <- list(
 N_ITERATIONS <- 100
 N_PERM       <- 100
 
-# Within-block correlation structure: block-diagonal compound symmetry with
-# heterogeneous module strengths. Module k has size ~ k^-alpha and within-module
-# correlation rho * k^-beta; correlation across modules is zero.
-#
-# Fitted to the breast.TCGA mRNA block over the first 20 eigenvalue fractions.
-# Matches DEFAULT_BLOCK_STRUCTURE in R/generate_data.R, spelled out here so this
-# file stands alone (collect_results.R sources it without generate_data.R).
+# Within-block correlation structure: OVERLAPPING FACTORS. A feature loads on
+# several latent factors rather than belonging to exactly one module, so
+# cor(i,j) takes a continuum of values. Spelled out here rather than referencing
+# DEFAULT_OVERLAP_STRUCTURE because collect_results.R sources this file without
+# generate_data.R.
 #
 # Set to NULL for the original independent-feature simulation. Not a cosmetic
-# change: nuisance module factors are independent across blocks but high
-# variance within a block, and at n = 100 they shift the detectability threshold
-# right by roughly 3-4x relative to independent noise.
+# change: nuisance factors are independent across blocks but high variance
+# within a block, and at n = 100 they shift the detectability threshold right
+# substantially relative to independent noise.
 #
-# beta = 0 (equal-strength modules) is a poor idealisation -- it produces a few
-# equal eigenvalue spikes then a cliff, and measured ~2x lower power at
-# signal_strength = 4 than the fitted decaying spectrum. See R/generate_data.R.
-BLOCK_STRUCTURE <- list(n_modules = 8, alpha = 0.5, rho = 0.8,
-                        beta = 0.5, frac = 1.0)
+#   K        number of latent factors
+#   gamma    spectrum slope (factor weights w_k ~ k^-gamma)
+#   pi_join  membership density; ~1/K would give roughly one factor per feature,
+#            i.e. the old disjoint-module structure
+#   h2_mean  mean communality -- share of a feature's variance that is shared
+#
+# The goal is omics-LIKE data for benchmarking CV methods, not a replica of any
+# dataset, so these are round numbers. See R/generate_data.R for the rationale.
+BLOCK_STRUCTURE <- list(type = "overlap", K = 20, gamma = 1.5,
+                        pi_join = 0.5, h2_mean = 0.6)
+
+# The previous structure, disjoint modules, kept for reference and for the
+# robustness sweep. Its three qualitative artifacts are why it was replaced:
+# 86.3% of feature pairs exactly zero, negative correlations structurally
+# impossible, and a spectrum that falls off a cliff after n_modules eigenvalues.
+#
+#                    mean|c|   RMS   median|c|   %neg   spectrum RMSE
+#   real mRNA         0.200   0.249    0.173    44.0%        --
+#   disjoint          0.134   0.235    0.066    43.2%       0.91
+#   overlap           0.198   0.248    0.162    50.0%       0.67
+#
+# DISJOINT_STRUCTURE <- list(n_modules = 8, alpha = 0.5, rho = 0.8,
+#                            beta = 0.5, frac = 1.0)
 
 # Where the truly relevant features sit relative to the modules: "spread"
-# (distributed) or "aligned" (all inside module 1). This is NOT a minor knob
-# once modules differ in strength:
+# (distributed) or "aligned" (all inside module 1).
+#
+# INERT under the overlapping structure: factor membership is random per
+# feature, so a contiguous block of relevant features is already spread across
+# the factor structure and the two modes coincide (verified in
+# diagnostics/check_overlap.R). Kept because it still applies if BLOCK_STRUCTURE
+# is switched back to disjoint modules, where it mattered a great deal:
 #
 #   spread  : oracle cor at s=1 is 0.50 +/- 0.03  |  power at s=4 = 0.38
 #   aligned : oracle cor at s=1 is 0.58 +/- 0.15  |  power at s=4 = 0.72
-#
-# "spread" is the default because it preserves the s/(s+1) identity, so a power
-# curve indexed by signal_strength is interpretable. Under "aligned" all 20
-# relevant features land in module 1 (rho = 0.8) and much of the variation at
-# fixed s is just how the loadings happen to interact with that module factor.
 SIGNAL_ALIGNMENT <- "spread"
 
 # Signal strengths to evaluate on signal datasets.
 #
-# Under BLOCK_STRUCTURE the power transition spans roughly s = 2 to 10 (at
-# n = 100, p = 200, q = 50, 20/10 relevant features). Real omics block pairs
-# calibrate far above this — breast.TCGA pairs match s ~ 20-70 depending on the
-# assumed sparsity — so every method saturates at power 1 on realistic data.
-# This grid therefore characterises the hard regime where the methods differ,
-# which is the claim the sweep can actually support.
+# Measured under the overlapping structure at n = 100, p = 200, q = 50, 20/10
+# relevant features (diagnostics/final_measure.R, 200 reps, proxy statistic):
+#
+#   s     : 1    1.5  2    2.5  3    4    5    6    8    10   12   16   20
+#   power : 0.06 0.03 0.07 0.15 0.28 0.53 0.57 0.75 0.89 0.93 0.97 0.99 1.00
+#
+# The grid below samples that densely where it is steep (2-6) and anchors both
+# ends. Note the transition sits in essentially the same place as under the
+# previous disjoint-module structure, so this grid did not need re-placing.
+#
+# Real omics block pairs calibrate far above it: breast.TCGA pairs match
+# s ~ 37-48 (diagnostics/calibrate3.R), where every method saturates at power 1.
+# The sweep therefore characterises the HARD REGIME where the methods differ,
+# which is the claim it can actually support.
 SIGNAL_STRENGTHS <- c(1, 2, 3, 4, 6, 8, 12)
 
 # Optional single-strength mode, for clusters whose MaxArraySize cannot hold the

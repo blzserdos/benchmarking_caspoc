@@ -46,25 +46,149 @@ module_cors <- function(n_modules, rho, beta) {
   pmin(0.95, rho * (seq_len(n_modules))^(-beta))
 }
 
+
+# --- Overlapping factor structure (alternative to disjoint modules) ----------
+
+# A feature loads on SEVERAL factors rather than belonging to exactly one:
+#
+#   N_j = sum_k a_jk F_k + sqrt(psi_j) eps_j        F_k, eps_j ~ N(0,1) iid
+#
+# so cor(i,j) = sum_k a_ik a_jk takes a continuum of values instead of the
+# binary {rho_k, 0} of disjoint modules.
+#
+# WHY, over disjoint modules. Three things disjoint cannot represent at all:
+#   - 86.3% of feature pairs are EXACTLY zero, so a wrongly-selected feature is
+#     unrelated to everything; in real data it is still entangled with the rest
+#   - negative correlations are impossible (all loadings on a module factor
+#     share a sign), which matters for CLR-transformed compositional data
+#   - only n_modules directions of variation exist, so the spectrum falls off a
+#     cliff, where real blocks have a long tail of moderate directions
+# Since the difficulty here is sPLS being distracted by directions competing
+# with the true signal, all three plausibly affect how the CV methods behave.
+#
+# SCOPE: the goal is OMICS-LIKE data for benchmarking CV methods, not a replica
+# of any dataset. Values below are deliberately round; a real block is used only
+# to confirm the right ballpark (mean|c| ~0.20 vs 0.200 real, spectrum RMSE ~0.8
+# vs 0.91 for disjoint). Tighter fitting would be false precision -- draw-to-draw
+# variation in Sigma is as large as the effect of the parameters themselves.
+#
+# THE KNOBS:
+#   K        number of latent factors
+#   gamma    spectrum slope, via factor weights w_k ~ k^-gamma. Only the DECAY
+#            matters: each feature is rescaled to its own communality target, so
+#            the absolute scale of w_k cancels (hence no w1 parameter).
+#   pi_join  membership density -- how many factors a feature loads on. This is
+#            a continuum: pi_join ~ 1/K gives roughly one factor per feature,
+#            i.e. the disjoint model, and low values leave some features on no
+#            factor at all (unstructured, the analogue of frac < 1). Disjoint
+#            and overlap are endpoints of one dial, not rival models.
+#   h2_mean  communality -- the share of a feature's variance carried by the
+#            common factors. Drawn per feature, so psi_j = 1 - h2_j is always a
+#            valid variance and no clipping is ever needed. The one knob worth
+#            thinking about: 0.5 vs 0.7 moves mean|c| from 0.170 to 0.229.
+#
+# Sigma is redrawn per call from the ambient RNG, so results average over an
+# ensemble of omics-like covariances rather than being conditional on one. Seed
+# as usual (set.seed before generating) for reproducibility.
+#
+# !! STILL REQUIRED BEFORE USE: this moves the power transition, so
+# !! SIGNAL_STRENGTHS must be re-placed via diagnostics/final_measure.R and the
+# !! real-data anchor re-computed via diagnostics/calibrate3.R.
+DEFAULT_OVERLAP_STRUCTURE <- list(
+  type    = "overlap",
+  K       = 20,        # number of latent factors
+  gamma   = 1.5,       # factor weights w_k ~ k^-gamma  (spectrum slope)
+  pi_join = 0.5,       # P(feature j loads on factor k) (membership density)
+  h2_mean = 0.6        # mean communality (share of variance that is shared)
+)
+
+# Fixed internals, not knobs: communality is drawn from a Beta on
+# [H2_MIN, H2_MAX] with concentration H2_CONC. The bounds keep psi a valid
+# variance; the concentration only sets how much communality varies between
+# features, and anything from 5 to 50 moves mean|c| by 0.002.
+H2_MIN  <- 0.02
+H2_MAX  <- 0.95
+H2_CONC <- 15
+
+#' Which structure family a `structure` list describes
+#'
+#' Lists with no `type` field are the original modular structure, so every
+#' existing config keeps working untouched.
+structure_type <- function(structure) {
+  if (is.null(structure)) return(NA_character_)
+  if (is.null(structure$type)) return("modules")
+  structure$type
+}
+
+#' Loadings, communalities and uniquenesses for the overlapping structure
+#'
+#' @param p          Number of features
+#' @param structure  An overlap structure list (see DEFAULT_OVERLAP_STRUCTURE)
+#' @return list(A = p x K loadings, h2 = communalities, psi = uniquenesses)
+overlap_loadings <- function(p, structure) {
+  K <- structure$K
+
+  # Relative factor weights; the overall scale cancels in the rescaling below.
+  w <- (seq_len(K))^(-structure$gamma)
+
+  # Membership, with a random sign so correlations can come out negative
+  M   <- matrix(runif(p * K) < structure$pi_join, nrow = p, ncol = K)
+  sgn <- matrix(sample(c(-1, 1), p * K, replace = TRUE), nrow = p, ncol = K)
+  A   <- M * sgn * rep(sqrt(w), each = p)
+
+  # Target communality per feature, Beta mapped onto [H2_MIN, H2_MAX]
+  mu <- (structure$h2_mean - H2_MIN) / (H2_MAX - H2_MIN)
+  if (mu <= 0 || mu >= 1) {
+    stop(sprintf("h2_mean must lie strictly inside (%g, %g)", H2_MIN, H2_MAX))
+  }
+  h2 <- H2_MIN + rbeta(p, H2_CONC * mu, H2_CONC * (1 - mu)) * (H2_MAX - H2_MIN)
+
+  # A feature that joined no factor carries no common variance at all: it is
+  # genuinely unstructured (psi = 1), not something to rescale up.
+  raw <- rowSums(A^2)
+  h2[raw <= 0] <- 0
+
+  # Rescale each row to hit its own communality target exactly. Overflow is
+  # impossible by construction, so no clipping is needed.
+  A <- A * ifelse(raw > 0, sqrt(h2 / raw), 0)
+
+  list(A = A, h2 = h2, psi = 1 - h2)
+}
+
 #' Draw an n x p noise matrix with unit marginal variance
 #'
-#' Three regimes, in precedence order:
-#'   structure non-NULL  -> modular correlation (one latent factor per module)
-#'   cor_within > 0      -> compound symmetry (all pairs equally correlated)
-#'   otherwise           -> independent features
+#' Four regimes, in precedence order:
+#'   structure$type == "overlap" -> overlapping factors (see above)
+#'   structure non-NULL          -> modular correlation (one factor per module)
+#'   cor_within > 0              -> compound symmetry (all pairs equal)
+#'   otherwise                   -> independent features
 #'
-#' The modular case uses a factor representation rather than mvrnorm: it is
+#' Both structured cases use a factor representation rather than mvrnorm: it is
 #' O(n*p) instead of an eigendecomposition of a p x p matrix, and it keeps each
-#' feature's marginal variance at 1 so the signal_strength parametrisation is
-#' unchanged by the choice of structure.
+#' feature's marginal variance at exactly 1 so the signal_strength
+#' parametrisation is unchanged by the choice of structure.
 #'
 #' @param n          Number of samples
 #' @param p          Number of features
 #' @param cor_within Compound-symmetry correlation (ignored if structure given)
-#' @param structure  Optional list(n_modules, alpha, rho, beta, frac). beta may
-#'                   be omitted, in which case all modules share correlation rho.
+#' @param structure  Optional structure list. Either the modular form,
+#'                   list(n_modules, alpha, rho, beta, frac) -- beta may be
+#'                   omitted, in which case all modules share correlation rho --
+#'                   or the overlapping form, list(type = "overlap", K, gamma,
+#'                   pi_join, h2_mean). A list with no `type` field is treated
+#'                   as modular.
 make_noise <- function(n, p, cor_within = 0, structure = NULL) {
-  if (!is.null(structure) && structure$rho > 0 && structure$n_modules >= 1) {
+  stype <- structure_type(structure)
+
+  if (identical(stype, "overlap")) {
+    L  <- overlap_loadings(p, structure)
+    Fk <- matrix(rnorm(n * structure$K), nrow = n, ncol = structure$K)
+    E  <- matrix(rnorm(n * p), nrow = n, ncol = p)
+    # var = sum_k a_jk^2 + psi_j = h2_j + (1 - h2_j) = 1, exactly.
+    return(Fk %*% t(L$A) + E * rep(sqrt(L$psi), each = n))
+  }
+
+  if (identical(stype, "modules") && structure$rho > 0 && structure$n_modules >= 1) {
     m    <- module_sizes(p, structure$n_modules, structure$alpha, structure$frac)
     beta <- if (is.null(structure$beta)) 0 else structure$beta
     rk   <- module_cors(length(m), structure$rho, beta)
@@ -106,6 +230,12 @@ make_noise <- function(n, p, cor_within = 0, structure = NULL) {
 #' latter would mean making the latent Z itself a shared module factor.
 relevant_indices <- function(p, n_rel, comp = 1, structure = NULL,
                              alignment = "spread") {
+  # The overlapping structure has no modules: factor membership is random per
+  # feature, so a contiguous run of features is ALREADY spread across the factor
+  # structure and "spread"/"aligned" coincide. Fall through to the contiguous
+  # default. SIGNAL_ALIGNMENT is therefore inert under type = "overlap".
+  if (identical(structure_type(structure), "overlap")) structure <- NULL
+
   if (alignment == "spread" && !is.null(structure) && structure$n_modules > 1) {
     m <- module_sizes(p, structure$n_modules, structure$alpha, structure$frac)
     starts <- cumsum(c(0L, head(m, -1)))
