@@ -91,9 +91,12 @@ module_cors <- function(n_modules, rho, beta) {
 # ensemble of omics-like covariances rather than being conditional on one. Seed
 # as usual (set.seed before generating) for reproducibility.
 #
-# !! STILL REQUIRED BEFORE USE: this moves the power transition, so
-# !! SIGNAL_STRENGTHS must be re-placed via diagnostics/final_measure.R and the
-# !! real-data anchor re-computed via diagnostics/calibrate3.R.
+# CALIBRATION: done. This structure moves the power transition, so it was
+# re-measured via diagnostics/final_measure.R and the real-data anchor
+# re-computed via diagnostics/calibrate3.R. SIGNAL_STRENGTHS needed no
+# re-placing in the end -- the transition landed essentially where it sat under
+# disjoint modules. See cluster/config.R for the resulting grid and for the
+# breast.TCGA anchor (s ~ 37-48, above the range where the methods differ).
 DEFAULT_OVERLAP_STRUCTURE <- list(
   type    = "overlap",
   K       = 20,        # number of latent factors
