@@ -77,7 +77,7 @@ Edit `cluster/config.R` to change simulation parameters. Edit `cluster/submit.sh
 
 Key parameters in `run_benchmarks.R`:
 
-- `N_ITERATIONS = 100` — simulation replicates per dataset (increase for final paper)
+- `N_DATASETS = 100` — independent simulated datasets per condition (increase for final paper)
 - `N_PERM = 100` — permutations per iteration
 - `N_CORES` — number of parallel workers (default: all cores minus one)
 - `CV_CONFIG` — shared settings: number of folds (10), repeats (11), inner folds (5)

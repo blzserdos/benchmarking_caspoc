@@ -21,7 +21,12 @@ HP_GRID <- list(
 )
 
 # Simulation settings
-N_ITERATIONS <- 100
+#
+# N_DATASETS counts INDEPENDENT SIMULATED DATASETS (replicate draws from the
+# generative model). Not to be confused with CV_CONFIG$num_repeats (repeats of
+# the fold partition WITHIN one dataset) or with sPLS's own max.iter/tol (the
+# NIPALS convergence loop inside a single fit).
+N_DATASETS   <- 100
 N_PERM       <- 100
 
 # Within-block correlation structure: OVERLAPPING FACTORS. A feature loads on
@@ -186,7 +191,7 @@ build_job_grid <- function() {
     }
 
     g <- expand.grid(
-      iteration       = seq_len(N_ITERATIONS),
+      iteration       = seq_len(N_DATASETS),
       approach        = APPROACHES,
       perm_id         = perm_ids,
       signal_strength = strengths,

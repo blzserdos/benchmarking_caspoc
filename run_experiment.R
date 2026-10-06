@@ -10,7 +10,7 @@
 #
 # One factorial sweep, one CV run per cell, no permutations:
 #
-#   4 approaches x N_ITERATIONS datasets x (sim_null + SIGNAL_STRENGTHS)
+#   4 approaches x N_DATASETS datasets x (sim_null + SIGNAL_STRENGTHS)
 #
 # Two readouts come out of the same runs:
 #
@@ -51,25 +51,25 @@ suppressMessages({
 
 source("R/generate_data.R")
 source("R/cv_approaches.R")
-source("cluster/config.R")   # APPROACHES, CV_CONFIG, HP_GRID, N_ITERATIONS,
+source("cluster/config.R")   # APPROACHES, CV_CONFIG, HP_GRID, N_DATASETS,
                              # SIGNAL_STRENGTHS, BLOCK_STRUCTURE, datasets
 
 # Optional overrides, for a quick end-to-end check before committing a machine
 # to the full run. Results land in a separate file so a smoke test cannot
 # contaminate the real one:
 #
-#   N_ITER=6 STRENGTHS=4,12 Rscript run_experiment.R
+#   N_DATASETS=6 STRENGTHS=4,12 Rscript run_experiment.R
 #
-SMOKE <- nzchar(Sys.getenv("N_ITER")) || nzchar(Sys.getenv("STRENGTHS"))
-if (nzchar(Sys.getenv("N_ITER"))) {
-  N_ITERATIONS <- as.integer(Sys.getenv("N_ITER"))
+SMOKE <- nzchar(Sys.getenv("N_DATASETS")) || nzchar(Sys.getenv("STRENGTHS"))
+if (nzchar(Sys.getenv("N_DATASETS"))) {
+  N_DATASETS <- as.integer(Sys.getenv("N_DATASETS"))
 }
 if (nzchar(Sys.getenv("STRENGTHS"))) {
   SIGNAL_STRENGTHS <- as.numeric(strsplit(Sys.getenv("STRENGTHS"), ",")[[1]])
 }
 if (SMOKE) {
-  message(sprintf("SMOKE TEST: %d iterations, signal strengths %s",
-                  N_ITERATIONS, paste(SIGNAL_STRENGTHS, collapse = ", ")))
+  message(sprintf("SMOKE TEST: %d datasets, signal strengths %s",
+                  N_DATASETS, paste(SIGNAL_STRENGTHS, collapse = ", ")))
 }
 
 RESULTS_DIR <- "results"
@@ -101,13 +101,13 @@ if (!dir.exists(RESULTS_DIR)) dir.create(RESULTS_DIR, recursive = TRUE)
 build_grid <- function() {
   g <- rbind(
     data.frame(dataset = "sim_null",
-               expand.grid(iteration       = seq_len(N_ITERATIONS),
+               expand.grid(iteration       = seq_len(N_DATASETS),
                            approach        = APPROACHES,
                            signal_strength = NA_real_,
                            stringsAsFactors = FALSE),
                stringsAsFactors = FALSE),
     data.frame(dataset = "sim_signal",
-               expand.grid(iteration       = seq_len(N_ITERATIONS),
+               expand.grid(iteration       = seq_len(N_DATASETS),
                            approach        = APPROACHES,
                            signal_strength = SIGNAL_STRENGTHS,
                            stringsAsFactors = FALSE),

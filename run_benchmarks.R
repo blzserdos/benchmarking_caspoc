@@ -50,8 +50,8 @@ HP_GRID <- list(
   keepY_options = c(5, 10, 20)
 )
 
-# Number of simulation iterations per dataset
-N_ITERATIONS <- 3  # increase for final paper (e.g. 200-500)
+# Number of independent simulated datasets per condition
+N_DATASETS <- 3  # increase for final paper (e.g. 200-500)
 
 # Number of permutations per iteration for significance testing
 N_PERM <- 10  # 100 gives 1% resolution on p-values
@@ -262,7 +262,7 @@ run_all_benchmarks <- function(n_cores = N_CORES, chunk_size = CHUNK_SIZE) {
 
       # ----- Build flat job grid -----
       job_grid <- expand.grid(
-        iteration = seq_len(N_ITERATIONS),
+        iteration = seq_len(N_DATASETS),
         approach  = APPROACHES,
         perm_id   = 0:N_PERM,  # 0 = real data, 1..N_PERM = permuted
         stringsAsFactors = FALSE
@@ -270,8 +270,8 @@ run_all_benchmarks <- function(n_cores = N_CORES, chunk_size = CHUNK_SIZE) {
       job_grid$dataset <- ds_name
 
       n_jobs <- nrow(job_grid)
-      message(sprintf("  %d total jobs (%d iterations x %d approaches x %d perm levels)",
-                      n_jobs, N_ITERATIONS, length(APPROACHES), N_PERM + 1))
+      message(sprintf("  %d total jobs (%d datasets x %d approaches x %d perm levels)",
+                      n_jobs, N_DATASETS, length(APPROACHES), N_PERM + 1))
       message(sprintf("  Dispatching with chunk_size = %d across %d cores...",
                       chunk_size, n_cores))
 
@@ -389,9 +389,9 @@ if (!interactive()) {
   run_all_benchmarks()
 } else {
   cat("Benchmarking script loaded. Call run_all_benchmarks() to execute.\n")
-  cat(sprintf("Config: %d iterations, %d permutations, %d approaches, %d datasets\n",
-              N_ITERATIONS, N_PERM, length(APPROACHES), length(datasets)))
+  cat(sprintf("Config: %d datasets, %d permutations, %d approaches, %d conditions\n",
+              N_DATASETS, N_PERM, length(APPROACHES), length(datasets)))
   cat(sprintf("Total jobs per simulated dataset: %d\n",
-              N_ITERATIONS * length(APPROACHES) * (N_PERM + 1)))
+              N_DATASETS * length(APPROACHES) * (N_PERM + 1)))
   cat(sprintf("Cores: %d, chunk_size: %d\n", N_CORES, CHUNK_SIZE))
 }
