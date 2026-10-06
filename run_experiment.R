@@ -6,42 +6,62 @@
 #   Rscript run_experiment.R                 # run (resumable)
 #   Rscript run_experiment.R --analyse       # re-print results, no computation
 #
-# THE DESIGN
+# THE DESIGN  (DESIGN = "demo", the default)
 #
-# One factorial sweep, one CV run per cell, no permutations:
+# A demonstration of CASPOC, not a complete benchmark. Three claims, nothing
+# more:
 #
-#   4 approaches x N_DATASETS datasets x (sim_null + SIGNAL_STRENGTHS)
+#   1. naive_cv and repeated_cv report inflated association strength;
+#      nested_cv and caspoc do not.
+#   2. caspoc does not achieve that by being insensitive -- its estimate rises
+#      with the true signal.
+#   3. caspoc costs less than nested_cv (fit counts + recorded runtimes).
 #
-# Two readouts come out of the same runs:
+# One factorial sweep, one CV run per cell:
 #
-#   BIAS    mean statistic on sim_null. Cov(X, Y) = 0 there by construction, so
-#           whatever a method reports IS its bias. Nothing else needed.
+#   4 approaches x N_DATASETS datasets x (sim_null + STRENGTHS_DEMO)
 #
-#   POWER   each method's own 95th-percentile null statistic is its critical
-#           value c_M; power is the share of signal runs that clear it.
+# ONE READOUT: the mean reported statistic per method per condition. Claim 1 is
+# carried entirely by the sim_null row -- Cov(X, Y) = 0 there by construction,
+# so whatever a method prints IS its bias, and training-set-size differences
+# between the methods do not matter because the truth is 0 for all of them.
+# Claim 2 is carried by reading caspoc across conditions: an estimate that
+# tracks s is responsive, which is all that needs showing.
 #
-# WHY NO PERMUTATIONS. A permutation test manufactures null data by shuffling Y.
-# We already simulate null data -- that is what sim_null is -- so the null
-# distribution is available directly. That removes the 101x multiplier and takes
-# the job count from 283,200 (cluster/, ~7,500 CPU-hours) to 3,200. Measured at
-# ~18 s/job: ~16 CPU-hours, about 2 h wall clock on 9 cores.
-# See cluster/ for the per-dataset permutation design, which answers
-# the narrower practitioner question ("what power does ONE analyst get from
-# method M plus a permutation test?") and is what a CASPOC user would actually
-# run.
+# WHY NO PERMUTATIONS OR p-VALUES. Both exist only to turn a statistic into a
+# yes/no decision, and a decision needs a threshold. Measuring the MEAN of the
+# statistic declares nothing, so it needs no threshold -- and therefore no
+# permutation distribution, no critical value, no rejection rate, no FPR. This
+# is the single change that removes almost all of the machinery.
 #
-# WHY c_M IS PER METHOD. Naive CV's null statistics are inflated, so its
-# threshold comes out high; CASPOC's comes out low. Each method is judged
-# against its own null, exactly as a permutation test would do per dataset. A
-# method therefore cannot win by inflating: inflation raises its threshold by
-# the same amount. This is what makes power comparable across methods whose
-# statistics live on different scales.
+# WHY THESE SIGNAL STRENGTHS. s = 4 is the hard regime where the methods can
+# separate at all. s = 40 is where real omics data actually sits: breast.TCGA
+# block pairs calibrate to s ~ 37-48 (diagnostics/calibrate3.R), where every
+# method detects the association every time. The s = 40 row is therefore the
+# load-bearing one for any real-data claim -- if naive_cv still overstates
+# there, the paper applies to real analyses; if the gap closes, the scope limit
+# is worth knowing before a reviewer finds it.
 #
-# WHAT THIS GIVES UP. The pooled threshold is marginal over Sigma draws (Sigma
-# is redrawn every iteration), where a permutation test would condition on the
-# dataset at hand. The null distribution is therefore slightly wider and power
-# comes out mildly conservative -- equally so for every method, so the
-# comparison is unaffected.
+# -----------------------------------------------------------------------------
+# DESIGN HISTORY -- set DESIGN <- "benchmark" below to restore the previous one
+# -----------------------------------------------------------------------------
+#
+# "benchmark" (previous default) additionally computed:
+#
+#   c_M     each method's 95th-percentile sim_null statistic, used as its own
+#           alpha = 0.05 threshold. Per method, so a method could not win by
+#           inflating -- inflation raised its own bar by the same amount.
+#   POWER   the share of signal runs clearing c_M, swept over the full
+#           SIGNAL_STRENGTHS grid c(1, 2, 3, 4, 6, 8, 12).
+#
+# Dropped because a demonstration needs no power curve, and because that sweep
+# characterises only the hard regime -- all four methods saturate at power 1.00
+# where real data lives, so the power axis cannot support a real-data claim.
+# Both are still computed and printed under DESIGN = "benchmark".
+#
+# See cluster/ for the third design: per-dataset permutation testing (283,200
+# jobs, ~7,500 CPU-hours), which answers the narrower practitioner question
+# "what power does ONE analyst get from method M plus a permutation test?"
 # =============================================================================
 
 suppressMessages({
@@ -53,6 +73,23 @@ source("R/generate_data.R")
 source("R/cv_approaches.R")
 source("cluster/config.R")   # APPROACHES, CV_CONFIG, HP_GRID, N_DATASETS,
                              # SIGNAL_STRENGTHS, BLOCK_STRUCTURE, datasets
+
+# -----------------------------------------------------------------------------
+# DESIGN SWITCH -- the one line to change to revert
+# -----------------------------------------------------------------------------
+#   "demo"      bias table only, s = 0 / 4 / 40        (current)
+#   "benchmark" adds c_M thresholds and power curves over the full grid
+#
+DESIGN <- "demo"
+
+STRENGTHS_DEMO <- c(4, 40)   # hard regime, then where real omics sits
+STRENGTHS_FULL <- SIGNAL_STRENGTHS   # c(1, 2, 3, 4, 6, 8, 12), from config.R
+
+SIGNAL_STRENGTHS <- switch(DESIGN,
+  demo      = STRENGTHS_DEMO,
+  benchmark = STRENGTHS_FULL,
+  stop("DESIGN must be \"demo\" or \"benchmark\", got: ", DESIGN)
+)
 
 # Optional overrides, for a quick end-to-end check before committing a machine
 # to the full run. Results land in a separate file so a smoke test cannot
@@ -176,64 +213,102 @@ run_one <- function(job) {
 
 analyse <- function(raw) {
 
-  null_runs   <- raw %>% dplyr::filter(dataset == "sim_null")
-  signal_runs <- raw %>% dplyr::filter(dataset == "sim_signal")
+  # sim_null is condition s = 0: one axis for every condition, so the estimates
+  # table reads straight across from "no signal" to "what real data looks like".
+  raw <- raw %>% mutate(s = ifelse(dataset == "sim_null", 0, signal_strength))
 
-  # --- BIAS: truth is 0 on sim_null, so the reported statistic IS the bias ---
-  bias <- null_runs %>%
-    group_by(approach) %>%
+  # --- ESTIMATES: the reported statistic, per method per condition ---
+  # At s = 0 the truth is 0, so the mean IS the bias. At s > 0 the mean is read
+  # ACROSS methods (does naive still sit above caspoc?) and ACROSS conditions
+  # (does caspoc rise with s?) -- no threshold is involved either way.
+  est <- raw %>%
+    group_by(approach, s) %>%
     summarise(
-      n_null       = sum(!is.na(observed_stat)),
-      bias         = mean(observed_stat, na.rm = TRUE),
-      sd_null      = sd(observed_stat, na.rm = TRUE),
-      # type = 1 keeps the threshold an actually observed value, so the nominal
-      # level is not inflated by interpolation between order statistics.
-      crit_value   = quantile(observed_stat, 1 - ALPHA, na.rm = TRUE, type = 1),
-      mean_runtime = mean(runtime_sec, na.rm = TRUE),
-      .groups = "drop"
-    )
-
-  # --- POWER: share of signal runs clearing that method's own threshold ---
-  power <- signal_runs %>%
-    left_join(bias %>% dplyr::select(approach, crit_value), by = "approach") %>%
-    group_by(approach, signal_strength) %>%
-    summarise(
-      n_signal  = sum(!is.na(observed_stat)),
+      n         = sum(!is.na(observed_stat)),
       mean_stat = mean(observed_stat, na.rm = TRUE),
-      power     = mean(observed_stat > crit_value, na.rm = TRUE),
+      sd_stat   = sd(observed_stat, na.rm = TRUE),
       .groups   = "drop"
     )
 
-  list(bias = bias, power = power)
+  runtime <- raw %>%
+    group_by(approach) %>%
+    summarise(mean_runtime = mean(runtime_sec, na.rm = TRUE), .groups = "drop")
+
+  out <- list(est = est, runtime = runtime, design = DESIGN)
+
+  # --- DESIGN = "benchmark" only: thresholds and power (see DESIGN HISTORY) ---
+  if (identical(DESIGN, "benchmark")) {
+    thresholds <- raw %>%
+      dplyr::filter(dataset == "sim_null") %>%
+      group_by(approach) %>%
+      summarise(
+        # type = 1 keeps the threshold an actually observed value, so the
+        # nominal level is not inflated by interpolating order statistics.
+        crit_value = quantile(observed_stat, 1 - ALPHA, na.rm = TRUE, type = 1),
+        .groups = "drop"
+      )
+
+    out$power <- raw %>%
+      dplyr::filter(dataset == "sim_signal") %>%
+      left_join(thresholds, by = "approach") %>%
+      group_by(approach, s) %>%
+      summarise(power = mean(observed_stat > crit_value, na.rm = TRUE),
+                .groups = "drop")
+    out$thresholds <- thresholds
+  }
+
+  out
 }
 
 report <- function(a) {
-  cat("\n=====================================================================\n")
-  cat("BIAS AND CALIBRATION  (sim_null: Cov(X,Y) = 0, so truth = 0.000)\n")
-  cat("=====================================================================\n\n")
-  cat(sprintf("%-14s %6s %10s %10s %12s %10s\n",
-              "Approach", "n", "Bias", "SD", "Crit value", "Time(s)"))
-  cat(strrep("-", 68), "\n")
-  for (i in seq_len(nrow(a$bias))) with(a$bias[i, ],
-    cat(sprintf("%-14s %6d %10.3f %10.3f %12.3f %10.1f\n",
-                approach, n_null, bias, sd_null, crit_value, mean_runtime)))
-  cat("\n  Bias       = mean statistic where the true association is zero.\n")
-  cat("  Crit value = that method's 95th-percentile null statistic, used as its\n")
-  cat("               own alpha = 0.05 threshold below. Higher bias -> higher\n")
-  cat("               threshold, so inflation buys a method nothing.\n")
+  conds     <- sort(unique(a$est$s))
+  approaches <- a$runtime$approach
 
-  cat("\n=====================================================================\n")
-  cat("POWER  (share of signal datasets clearing that method's threshold)\n")
-  cat("=====================================================================\n\n")
-  strengths <- sort(unique(a$power$signal_strength))
-  cat(sprintf("%-14s", "Approach"), sprintf("%7g", strengths), "\n")
-  cat(sprintf("%-14s", "  s ="),    strrep(" ", 0), strrep("-", 8 * length(strengths)), "\n")
-  for (ap in a$bias$approach) {
-    row <- a$power %>% dplyr::filter(approach == ap) %>% arrange(signal_strength)
-    cat(sprintf("%-14s", ap), sprintf("%7.2f", row$power), "\n")
+  cat("\n=======================================================================\n")
+  cat("REPORTED ASSOCIATION STRENGTH  (mean of the statistic each method prints)\n")
+  cat("=======================================================================\n\n")
+
+  cat(sprintf("%-14s", "Approach"))
+  for (s in conds) cat(sprintf("%16s", if (s == 0) "s=0 (null)" else sprintf("s=%g", s)))
+  cat(sprintf("%11s\n", "Time(s)"))
+  cat(strrep("-", 14 + 16 * length(conds) + 11), "\n")
+
+  for (ap in approaches) {
+    cat(sprintf("%-14s", ap))
+    for (s in conds) {
+      r <- a$est[a$est$approach == ap & a$est$s == s, ]
+      if (nrow(r) == 0) cat(sprintf("%16s", "-"))
+      else cat(sprintf("%10.3f%6s", r$mean_stat[1], sprintf("(%.2f)", r$sd_stat[1])))
+    }
+    cat(sprintf("%11.1f\n", a$runtime$mean_runtime[a$runtime$approach == ap]))
   }
-  cat("\n  Every method is held to a 0.05 false-positive rate by construction,\n")
-  cat("  so these are directly comparable. 0.05 = no better than chance.\n\n")
+
+  cat("\n  Cells are mean (SD) over", max(a$est$n), "datasets.\n")
+  cat("\n  s = 0    truth is 0, so the number printed IS the bias.\n")
+  cat("  s > 0    read ACROSS methods (does naive still sit above caspoc?) and\n")
+  cat("           ACROSS columns (does caspoc rise with the true signal?).\n")
+  cat("           No threshold, no p-value, no rejection rate is involved.\n")
+  cat("  s = 40   where real omics data sits (breast.TCGA ~ s 37-48), so this\n")
+  cat("           column is what any real-data claim rests on.\n")
+
+  if (identical(a$design, "benchmark")) {
+    cat("\n=======================================================================\n")
+    cat("POWER  (DESIGN = \"benchmark\": share of signal runs clearing c_M)\n")
+    cat("=======================================================================\n\n")
+    ps <- sort(unique(a$power$s))
+    cat(sprintf("%-14s %10s", "Approach", "c_M"))
+    for (s in ps) cat(sprintf("%8s", sprintf("s=%g", s)))
+    cat("\n"); cat(strrep("-", 24 + 8 * length(ps)), "\n")
+    for (ap in approaches) {
+      cat(sprintf("%-14s %10.3f", ap, a$thresholds$crit_value[a$thresholds$approach == ap]))
+      row <- a$power %>% dplyr::filter(approach == ap) %>% arrange(s)
+      cat(sprintf("%8.2f", row$power), "\n")
+    }
+    cat("\n  c_M is each method's own 95th-percentile null statistic, so every\n")
+    cat("  method is held to a 0.05 false-positive rate and the power numbers\n")
+    cat("  are comparable. 0.05 = no better than chance.\n")
+  }
+  cat("\n")
 }
 
 
@@ -288,5 +363,6 @@ for (b in seq_along(batches)) {
 message(sprintf("\nDone. %d rows saved to %s", nrow(done), RAW_FILE))
 
 a <- analyse(done)
-saveRDS(a, file.path(RESULTS_DIR, "experiment_summary.rds"))
+saveRDS(a, file.path(RESULTS_DIR,
+                     if (SMOKE) "smoke_experiment_summary.rds" else "experiment_summary.rds"))
 report(a)
